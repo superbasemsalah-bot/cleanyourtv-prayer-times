@@ -1,0 +1,68 @@
+
+name: Build CleanYourTV IPK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract source ZIP
+        run: |
+          ZIP_FILE=$(find . -maxdepth 1 -name '*.zip' | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "Source ZIP file not found"
+            exit 1
+          fi
+          mkdir source
+          unzip -q "$ZIP_FILE" -d source
+          PROJECT_DIR=$(find source -mindepth 1 -maxdepth 1 -type d | head -n 1)
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build dependencies
+        run: |
+          cd "$PROJECT_DIR"
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt ziglang==0.14.1
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --prefix build/tools --no-audit --no-fund @webos-tools/cli@3.2.6
+
+      - name: Configure Zig and webOS CLI
+        run: |
+          cd "$PROJECT_DIR"
+          echo "ZIG=$(python -c 'from pathlib import Path; import ziglang; print(Path(ziglang.__file__).parent / "zig")')" >> $GITHUB_ENV
+          echo "$PWD/build/tools/node_modules/.bin" >> $GITHUB_PATH
+
+      - name: Build IPK packages
+        run: |
+          cd "$PROJECT_DIR"
+          chmod +x scripts/build.sh
+          bash scripts/build.sh
+
+      - name: Upload IPK files
+        uses: actions/upload-artifact@v4
+        with:
+          name: CleanYourTV-IPK
+          path: |
+            source/*/dist/*.ipk
+            source/*/dist/SHA256SUMS
+          if-no-files-found: error
